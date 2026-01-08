@@ -3,25 +3,36 @@ import streamlit as st
 
 
 st.set_page_config(page_title="계산기 웹앱", page_icon="🧮", layout="centered")
+st.title("🧮 계산기 웹앱 (키패드 입력)")
+st.caption("키패드로 숫자를 입력하고, 사칙연산 · 모듈러 · 지수 · 로그를 계산합니다.")
 
-st.title("🧮 계산기 웹앱 (Streamlit)")
-st.caption("사칙연산 · 모듈러 · 지수 · 로그 기능을 제공합니다.")
+
+# -----------------------------
+# 상태 초기화
+# -----------------------------
+def init_state():
+    defaults = {
+        "a_str": "0",
+        "b_str": "0",
+        "base_str": "10",
+        "active_field": "a",   # "a" | "b" | "base"
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_state()
 
 
+# -----------------------------
+# 유틸
+# -----------------------------
 def safe_float(x: str) -> float:
-    """
-    문자열을 float로 변환합니다.
-    쉼표(,) 입력을 허용하기 위해 제거 후 변환합니다.
-    """
     x = x.strip().replace(",", "")
     return float(x)
 
 
 def compute(op: str, a: float, b: float | None, log_base: float | None) -> float:
-    """
-    op에 따라 연산을 수행하고 결과를 반환합니다.
-    b 또는 log_base는 op에 따라 None일 수 있습니다.
-    """
     if op == "덧셈 (+)":
         return a + b
     if op == "뺄셈 (-)":
@@ -37,7 +48,6 @@ def compute(op: str, a: float, b: float | None, log_base: float | None) -> float
             raise ZeroDivisionError("0으로 나눈 나머지는 정의되지 않습니다.")
         return a % b
     if op == "지수 (a^b)":
-        # 파이썬의 거듭제곱은 a**b
         return a ** b
     if op == "로그 (log_base(a))":
         if a <= 0:
@@ -51,7 +61,110 @@ def compute(op: str, a: float, b: float | None, log_base: float | None) -> float
     raise ValueError("지원하지 않는 연산입니다.")
 
 
+def get_field_value(field: str) -> str:
+    if field == "a":
+        return st.session_state["a_str"]
+    if field == "b":
+        return st.session_state["b_str"]
+    if field == "base":
+        return st.session_state["base_str"]
+    raise ValueError("알 수 없는 필드입니다.")
+
+
+def set_field_value(field: str, value: str) -> None:
+    if field == "a":
+        st.session_state["a_str"] = value
+        return
+    if field == "b":
+        st.session_state["b_str"] = value
+        return
+    if field == "base":
+        st.session_state["base_str"] = value
+        return
+    raise ValueError("알 수 없는 필드입니다.")
+
+
+def normalize_number_str(s: str) -> str:
+    """입력 문자열을 계산기스럽게 정리(선행 0, 빈값 등)."""
+    s = s.strip()
+    if s == "" or s == "-":
+        return s
+    # "000" -> "0", "000.1" -> "0.1"
+    if s.startswith("-"):
+        sign = "-"
+        body = s[1:]
+    else:
+        sign = ""
+        body = s
+
+    if body == "":
+        return s
+
+    if body.startswith("0") and len(body) > 1 and not body.startswith("0."):
+        # 0으로 시작하고 0.이 아니면 앞의 0 제거
+        body = body.lstrip("0")
+        if body == "" or body.startswith("."):
+            body = "0" + body
+
+    return sign + body
+
+
+def append_char(ch: str) -> None:
+    field = st.session_state["active_field"]
+    cur = get_field_value(field)
+
+    # 초기값 "0"일 때 숫자 입력이면 치환(0 -> 7)
+    if cur == "0" and ch.isdigit():
+        cur = ch
+    else:
+        # '.'는 1회만 허용
+        if ch == "." and "." in cur:
+            return
+        cur = cur + ch
+
+    set_field_value(field, normalize_number_str(cur))
+
+
+def toggle_sign() -> None:
+    field = st.session_state["active_field"]
+    cur = get_field_value(field).strip()
+    if cur.startswith("-"):
+        cur = cur[1:]
+        if cur == "":
+            cur = "0"
+    else:
+        if cur == "" or cur == "0":
+            cur = "-0"
+        else:
+            cur = "-" + cur
+    set_field_value(field, normalize_number_str(cur))
+
+
+def backspace() -> None:
+    field = st.session_state["active_field"]
+    cur = get_field_value(field)
+    if cur == "" or cur == "0":
+        return
+    cur = cur[:-1]
+    if cur == "" or cur == "-":
+        cur = "0"
+    set_field_value(field, normalize_number_str(cur))
+
+
+def clear_active() -> None:
+    field = st.session_state["active_field"]
+    set_field_value(field, "0")
+
+
+def clear_all() -> None:
+    st.session_state["a_str"] = "0"
+    st.session_state["b_str"] = "0"
+    st.session_state["base_str"] = "10"
+
+
+# -----------------------------
 # 연산 선택
+# -----------------------------
 operation = st.selectbox(
     "연산을 선택하세요",
     [
@@ -67,50 +180,49 @@ operation = st.selectbox(
 
 st.divider()
 
-# 입력 UI: 연산 종류에 따라 필요한 입력을 다르게 받기
-# a는 항상 필요
-a_str = st.text_input("첫 번째 값 (a)", value="0")
+# -----------------------------
+# 입력 대상 선택 + 표시
+# -----------------------------
+needs_b = operation in ["덧셈 (+)", "뺄셈 (-)", "곱셈 (×)", "나눗셈 (÷)", "모듈러 (%)", "지수 (a^b)"]
+needs_base = operation == "로그 (log_base(a))"
 
-b_str = None
-base_str = None
+field_options = ["a"]
+if needs_b:
+    field_options.append("b")
+if needs_base:
+    field_options.append("base")
 
-if operation in ["덧셈 (+)", "뺄셈 (-)", "곱셈 (×)", "나눗셈 (÷)", "모듈러 (%)", "지수 (a^b)"]:
-    b_str = st.text_input("두 번째 값 (b)", value="0")
+labels = {"a": "a(첫 번째 값)", "b": "b(두 번째 값)", "base": "base(로그 밑)"}
 
-if operation == "로그 (log_base(a))":
-    base_str = st.text_input("로그의 밑 (base)", value="10")
+st.radio(
+    "키패드로 입력할 값을 선택하세요",
+    options=field_options,
+    format_func=lambda x: labels[x],
+    horizontal=True,
+    key="active_field",
+)
 
-# 계산 버튼
-col1, col2 = st.columns([1, 1])
-with col1:
-    do_calc = st.button("계산", type="primary")
-with col2:
-    st.button("초기화", on_click=lambda: st.session_state.clear())
+# 표시용 입력칸(직접 타이핑도 가능)
+colA, colB, colC = st.columns(3 if (needs_b or needs_base) else 1)
+with colA:
+    st.text_input("a", key="a_str")
+if needs_b:
+    with colB:
+        st.text_input("b", key="b_str")
+if needs_base:
+    with colC:
+        st.text_input("base", key="base_str")
 
-if do_calc:
-    try:
-        a = safe_float(a_str)
+st.caption("입력 선택(라디오) 후 아래 키패드 버튼으로 숫자를 넣을 수 있습니다.")
 
-        b = None
-        if b_str is not None:
-            b = safe_float(b_str)
+st.divider()
 
-        log_base = None
-        if base_str is not None:
-            log_base = safe_float(base_str)
+# -----------------------------
+# 키패드(실물 계산기 배열 느낌)
+# -----------------------------
+# 7 8 9 ⌫
+# 4 5 6 ±
+# 1 2 3 C
+# 0 . 00 AC
 
-        result = compute(operation, a, b, log_base)
-
-        st.success("계산이 완료되었습니다.")
-        st.metric(label="결과", value=f"{result}")
-
-        # 참고 출력(선택)
-        with st.expander("자세히 보기"):
-            st.write({"operation": operation, "a": a, "b": b, "base": log_base, "result": result})
-
-    except ValueError as e:
-        st.error(f"입력 오류: {e}")
-    except ZeroDivisionError as e:
-        st.error(f"연산 오류: {e}")
-    except Exception as e:
-        st.error(f"알 수 없는 오류: {e}")
+r1 =
